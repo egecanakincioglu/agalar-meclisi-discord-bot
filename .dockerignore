@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.gitignore
+
+data
+data/*
+config/Secrets.yml
+
+.env
+npm-debug.log
+.DS_Store
