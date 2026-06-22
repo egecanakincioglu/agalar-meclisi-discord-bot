@@ -25,6 +25,30 @@ export function recordMemberJoin(
     .get();
 
   if (existing) {
+    // Eski kayıtta inviter yok ama şimdi varsa — güncelle ve sayacı arttır
+    if (!existing.inviterId && inviterId) {
+      db.update(memberInvites)
+        .set({ inviterId, inviteCode })
+        .where(eq(memberInvites.id, existing.id))
+        .run();
+
+      ensureInviteStats(guildId, inviterId);
+      db.update(inviteStats)
+        .set({
+          totalInvites: sql`total_invites + 1`,
+          activeInvites: sql`active_invites + 1`,
+          updatedAt: now(),
+        })
+        .where(
+          and(
+            eq(inviteStats.guildId, guildId),
+            eq(inviteStats.userId, inviterId),
+          ),
+        )
+        .run();
+
+      return { skipped: false, reason: "backfilled_inviter" };
+    }
     return { skipped: true, reason: "duplicate_active" };
   }
 

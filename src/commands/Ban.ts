@@ -1,4 +1,4 @@
-import { PermissionFlagsBits, SlashCommandBuilder } from "discord.js";
+import { EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } from "discord.js";
 import type { Command } from "../types/Command.js";
 import { canModerateTarget, isAdmin } from "../handlers/ModerationHandler.js";
 
@@ -18,7 +18,19 @@ const command: Command = {
     const canModerate = await canModerateTarget(interaction, targetMember, "ban");
     if (!canModerate) return;
     await targetMember.ban({ reason });
-    await interaction.reply({ content: `${targetUser} sunucudan banlandı.\nYetkili: ${interaction.user}\nSebep: **${reason}**` });
+
+    const embed = new EmbedBuilder()
+      .setColor(0xed4245)
+      .setTitle("🔨 Ban")
+      .setThumbnail(targetUser.displayAvatarURL())
+      .addFields(
+        { name: "Kullanıcı", value: `${targetUser} (${targetUser.tag})`, inline: true },
+        { name: "Yetkili", value: `${interaction.user}`, inline: true },
+        { name: "Sebep", value: reason, inline: false },
+      )
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [embed] });
   },
 };
 

@@ -16,6 +16,7 @@ import type {
 } from "discord.js";
 
 import { getGuildSettings, updateGuildSettings } from "../database/repositories/GuildSettingsRepository.js";
+import { getInviteSummary } from "../database/repositories/InviteRepository.js";
 
 type LeaveInteraction =
   | ChatInputCommandInteraction
@@ -144,14 +145,18 @@ export async function handleLeaveInteraction(
   }
 }
 
-export async function sendLeaveMessage(member: GuildMember): Promise<void> {
+export async function sendLeaveMessage(member: GuildMember, inviterId: string | null): Promise<void> {
   const settings = getGuildSettings(member.guild.id);
   if (!settings.leaveEnabled || !settings.leaveChannelId) return;
 
   const channel = member.guild.channels.cache.get(settings.leaveChannelId);
   if (!channel || !channel.isTextBased()) return;
 
-  const message = `👋 **${member.user.tag}** sunucudan ayrıldı. Toplam üye: **${member.guild.memberCount}**`;
+  const message = `👋 ${member} sunucudan ayrıldı.` +
+    (inviterId
+      ? ` <@${inviterId}> toplam davet sayısı **${getInviteSummary(member.guild.id, inviterId).netInvites}** oldu!`
+      : "");
+
   if (channel.isSendable()) {
     await channel.send(message).catch(() => {});
   }

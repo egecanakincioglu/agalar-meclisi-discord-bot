@@ -9,7 +9,7 @@ const event: BotEvent = {
 
   async execute(member: GuildMember) {
     const result = recordMemberLeave(member.guild.id, member.id);
-    await sendLeaveMessage(member);
+    await sendLeaveMessage(member, result.inviterId);
     console.log(`${member.user.tag} ayrıldı | inviter: ${result.inviterId ?? "-"} | ${result.updated ? "updated" : "skipped"}`);
   },
 };
