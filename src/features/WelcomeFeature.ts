@@ -160,10 +160,10 @@ export async function sendWelcomeMessage(input: WelcomeMessageInput): Promise<vo
   const channel = input.member.guild.channels.cache.get(settings.welcomeChannelId);
   if (!channel || !channel.isTextBased()) return;
 
-  const message = `🎉 ${input.member} sunucuya hoş geldin!\n` +
-    (input.inviterId ? `Davet eden: <@${input.inviterId}> (${input.inviterInviteCount} davet)\n` : "") +
-    (input.inviteCode ? `Davet kodu: \`${input.inviteCode}\`\n` : "") +
-    `Toplam üye: **${input.member.guild.memberCount}**`;
+  const message = `🎉 ${input.member} sunucuya hoş geldin.` +
+    (input.inviterId
+      ? ` <@${input.inviterId}> toplam davet sayısı **${input.inviterInviteCount}** oldu!`
+      : "");
 
   if (channel.isSendable()) {
     await channel.send(message).catch(() => {});
