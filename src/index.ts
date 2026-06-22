@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits } from "discord.js";
+import { Client, Events, GatewayIntentBits } from "discord.js";
 import { loadCommands } from "./handlers/CommandHandler.js";
 import { loadComponents } from "./handlers/ComponentHandler.js";
 import { loadEvents } from "./handlers/EventHandler.js";
@@ -6,6 +6,8 @@ import { deployCommands } from "./handlers/DeployCommandsHandler.js";
 import { getConfig, startLiveConfig, stopLiveConfig } from "./handlers/ConfigHandler.js";
 import { initializeDatabase } from "./database/Init.js";
 import { stopPresenceRotation } from "./handlers/PresenceHandler.js";
+import { autoJoinVoiceChannels } from "./handlers/VoiceAutoJoinHandler.js";
+import { setMainClient, setMinecraftClient, handleVoiceStateUpdate } from "./features/VoiceFeature.js";
 import { commands } from "./commands/Arimo.js";
 import { components } from "./components/Arimo.js";
 import { events } from "./events/Arimo.js";
@@ -41,10 +43,42 @@ async function main() {
   loadComponents(components);
   loadEvents(client, events);
 
+  setMainClient(client);
+
+  const mcConfig = config.secrets.minecraft;
+  let mcClient: Client | null = null;
+
+  if (mcConfig.enabled && mcConfig.token) {
+    mcClient = new Client({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildVoiceStates,
+      ],
+    });
+
+    mcClient.once(Events.ClientReady, async () => {
+      console.log(`Minecraft bot: ${mcClient?.user?.tag} aktif.`);
+      setMinecraftClient(mcClient);
+      await autoJoinVoiceChannels(mcClient!);
+    });
+
+    mcClient.on(Events.VoiceStateUpdate, (oldState, newState) => {
+      handleVoiceStateUpdate(mcClient!, oldState, newState);
+    });
+
+    await mcClient.login(mcConfig.token);
+  }
+
+  client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+    handleVoiceStateUpdate(client, oldState, newState);
+  });
+
   process.on("SIGINT", () => {
     console.log("Bot kapatılıyor...");
     stopLiveConfig();
     stopPresenceRotation();
+    setMinecraftClient(null);
+    if (mcClient) mcClient.destroy();
     client.destroy();
     process.exit(0);
   });
@@ -53,6 +87,8 @@ async function main() {
     console.log("Bot kapatılıyor...");
     stopLiveConfig();
     stopPresenceRotation();
+    setMinecraftClient(null);
+    if (mcClient) mcClient.destroy();
     client.destroy();
     process.exit(0);
   });
