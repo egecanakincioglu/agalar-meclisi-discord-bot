@@ -13,12 +13,24 @@ import type {
   ChatInputCommandInteraction,
   Client,
   Guild,
+  VoiceState,
 } from "discord.js";
 
 import { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus } from "@discordjs/voice";
 import { getVoiceSettings, updateVoiceSettings } from "../database/repositories/VoiceSettingsRepository.js";
 
 type VoiceInteraction = ChatInputCommandInteraction | ButtonInteraction | ChannelSelectMenuInteraction;
+
+let mainClient: Client | null = null;
+let minecraftClient: Client | null = null;
+
+export function setMainClient(client: Client): void {
+  mainClient = client;
+}
+
+export function setMinecraftClient(client: Client | null): void {
+  minecraftClient = client;
+}
 
 const CUSTOM_IDS = {
   setup: "voiceset:setup",
@@ -104,25 +116,53 @@ function buildVoiceChannelSelectPanel() {
   return { embeds: [embed], components: [selectRow, buttonRow] };
 }
 
-export function botJoinVoice(client: Client, guild: Guild, channelId: string): void {
-  const channel = guild.channels.cache.get(channelId);
-  if (!channel || !channel.isVoiceBased()) { console.log(`[Voice] Geçersiz ses kanalı: ${channelId}`); return; }
+// @discordjs/voice isolates connections by "group".
+// Main client uses the default group; MC client uses "mc" group.
+// Same guild ID, different groups → two independent connections.
+const MAIN_GROUP = "default";
+const MC_GROUP = "mc";
 
-  const existing = getVoiceConnection(guild.id);
-  if (existing && existing.joinConfig.channelId === channelId) return;
+function clientGroup(label: string): string {
+  return label === "MC" ? MC_GROUP : MAIN_GROUP;
+}
+
+function connectVoice(
+  client: Client,
+  guild: Guild,
+  channelId: string,
+  label: string,
+): void {
+  const guildForClient = client.guilds.cache.get(guild.id);
+  if (!guildForClient) { console.log(`[Voice:${label}] Sunucu bulunamadı: ${guild.id}`); return; }
+
+  const channel = guildForClient.channels.cache.get(channelId);
+  if (!channel || !channel.isVoiceBased()) { console.log(`[Voice:${label}] Geçersiz ses kanalı: ${channelId}`); return; }
+
+  const group = clientGroup(label);
+  const existing = getVoiceConnection(guild.id, group);
+  const actualChannelId = guildForClient.members.me?.voice.channelId;
+
+  if (existing && existing.joinConfig.channelId === channelId && actualChannelId === channelId) return;
+
+  if (existing) {
+    existing.destroy();
+  }
 
   const connection = joinVoiceChannel({
-    guildId: guild.id, channelId,
-    adapterCreator: guild.voiceAdapterCreator,
-    selfDeaf: true, selfMute: false,
+    guildId: guild.id,
+    channelId,
+    group,
+    adapterCreator: guildForClient.voiceAdapterCreator,
+    selfDeaf: true,
+    selfMute: false,
   });
 
   connection.on(VoiceConnectionStatus.Ready, () => {
-    console.log(`[Voice] Bağlandı: ${channel.name} (${guild.name})`);
+    console.log(`[Voice:${label}] Bağlandı: ${channel.name} (${guild.name})`);
   });
 
   connection.on(VoiceConnectionStatus.Disconnected, async () => {
-    console.log(`[Voice] Bağlantı koptu: ${guild.name}`);
+    console.log(`[Voice:${label}] Bağlantı koptu: ${guild.name}`);
     try {
       await Promise.race([
         new Promise<void>(resolve => {
@@ -132,27 +172,93 @@ export function botJoinVoice(client: Client, guild: Guild, channelId: string): v
         new Promise<void>(resolve => setTimeout(resolve, 5000)),
       ]);
       if (connection.state.status === VoiceConnectionStatus.Disconnected) {
-        console.log(`[Voice] Yeniden bağlanıyor: ${guild.name}`);
+        console.log(`[Voice:${label}] Yeniden bağlanıyor: ${guild.name}`);
         connection.destroy();
-        botJoinVoice(client, guild, channelId);
+        const settings = getVoiceSettings(guild.id);
+        if (settings.enabled && settings.channelId) {
+          connectVoice(client, guild, settings.channelId, label);
+        }
       }
     } catch {
-      try { botJoinVoice(client, guild, channelId); } catch (err) {
-        console.error(`[Voice] Yeniden bağlanma başarısız: ${guild.name}`, err);
+      try {
+        const settings = getVoiceSettings(guild.id);
+        if (settings.enabled && settings.channelId) {
+          connectVoice(client, guild, settings.channelId, label);
+        }
+      } catch (err) {
+        console.error(`[Voice:${label}] Yeniden bağlanma başarısız: ${guild.name}`, err);
       }
     }
   });
 
   connection.on(VoiceConnectionStatus.Destroyed, () => {
-    console.log(`[Voice] Bağlantı kapatıldı: ${guild.name}`);
+    console.log(`[Voice:${label}] Bağlantı kapatıldı: ${guild.name}`);
   });
 
-  connection.on("error", error => { console.error(`[Voice] Hata: ${guild.name}`, error); });
+  connection.on("error", error => { console.error(`[Voice:${label}] Hata: ${guild.name}`, error); });
+}
+
+export function botJoinVoice(client: Client, guild: Guild, channelId: string): void {
+  const label = getClientLabel(client);
+  connectVoice(client, guild, channelId, label);
+}
+
+/** Connect both clients — used by /voiceset enable & channel select. */
+function botJoinVoiceBoth(guild: Guild, channelId: string): void {
+  if (mainClient) {
+    const mainGuild = mainClient.guilds.cache.get(guild.id) ?? guild;
+    connectVoice(mainClient, mainGuild, channelId, "Ana");
+  }
+  if (minecraftClient?.isReady()) {
+    const mcGuild = minecraftClient.guilds.cache.get(guild.id);
+    if (mcGuild) {
+      connectVoice(minecraftClient, mcGuild, channelId, "MC");
+    }
+  }
 }
 
 export function botLeaveVoice(guildId: string): void {
-  const connection = getVoiceConnection(guildId);
-  if (connection) connection.destroy();
+  const mainConn = getVoiceConnection(guildId, MAIN_GROUP);
+  if (mainConn) mainConn.destroy();
+
+  const mcConn = getVoiceConnection(guildId, MC_GROUP);
+  if (mcConn) mcConn.destroy();
+}
+
+// --- Voice state guard: snap back if dragged to wrong channel ---
+
+const guardTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function getClientLabel(client: Client): string {
+  if (client === mainClient) return "Ana";
+  if (client === minecraftClient) return "MC";
+  return "?";
+}
+
+export async function handleVoiceStateUpdate(
+  client: Client,
+  oldState: VoiceState,
+  newState: VoiceState,
+): Promise<void> {
+  if (oldState.member?.user.id !== client.user?.id) return;
+
+  const guild = newState.guild ?? oldState.guild;
+  if (!guild) return;
+
+  const settings = getVoiceSettings(guild.id);
+  if (!settings.enabled || !settings.channelId) return;
+  if (newState.channelId === settings.channelId) return;
+
+  // Debounce per guild+client
+  const guardKey = `${client.user!.id}:${guild.id}`;
+  if (guardTimers.has(guardKey)) return;
+
+  const label = getClientLabel(client);
+  console.log(`[Voice:Guard:${label}] Yanlış kanal: ${newState.channelId ?? "yok"} → düzeltiliyor: ${settings.channelId} (${guild.name})`);
+
+  guardTimers.set(guardKey, setTimeout(() => guardTimers.delete(guardKey), 3000));
+
+  connectVoice(client, guild, settings.channelId, label);
 }
 
 export async function handleVoiceInteraction(
@@ -174,7 +280,7 @@ export async function handleVoiceInteraction(
       case CUSTOM_IDS.enable: {
         updateVoiceSettings(guild.id, { enabled: true });
         const settings = getVoiceSettings(guild.id);
-        if (settings.channelId) botJoinVoice(interaction.client, guild, settings.channelId);
+        if (settings.channelId) botJoinVoiceBoth(guild, settings.channelId);
         await interaction.update(await buildVoicePanel(guild)); return;
       }
       case CUSTOM_IDS.disable: {
@@ -188,7 +294,7 @@ export async function handleVoiceInteraction(
   if (interaction.isChannelSelectMenu() && interaction.customId === CUSTOM_IDS.selectChannel) {
     const channelId = interaction.values[0];
     updateVoiceSettings(interaction.guild.id, { channelId, enabled: true });
-    botJoinVoice(interaction.client, interaction.guild, channelId);
+    botJoinVoiceBoth(interaction.guild, channelId);
     await interaction.update(await buildVoicePanel(interaction.guild));
   }
 }

@@ -6,6 +6,11 @@ export type SecretsConfig = {
     clientId: string;
     guildId: string;
   };
+  minecraft: {
+    enabled: boolean;
+    token: string;
+    clientId: string;
+  };
 };
 
 const defaultSecretsConfig: SecretsConfig = {
@@ -13,6 +18,11 @@ const defaultSecretsConfig: SecretsConfig = {
     token: "",
     clientId: "",
     guildId: "",
+  },
+  minecraft: {
+    enabled: false,
+    token: "",
+    clientId: "",
   },
 };
 
@@ -22,6 +32,13 @@ function asObject(value: unknown): Record<string, unknown> {
   }
 
   return {};
+}
+
+function asBoolean(value: unknown, fallback: boolean) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.toLowerCase() === "true";
+  if (typeof value === "number") return value === 1;
+  return fallback;
 }
 
 function asString(value: unknown, fallback: string) {
@@ -36,6 +53,7 @@ export const secretsConfig = {
   normalize(raw) {
     const root = asObject(raw);
     const discord = asObject(root.discord);
+    const minecraft = asObject(root.minecraft);
 
     return {
       discord: {
@@ -47,6 +65,20 @@ export const secretsConfig = {
         guildId: asString(
           discord.guildId,
           defaultSecretsConfig.discord.guildId,
+        ),
+      },
+      minecraft: {
+        enabled: asBoolean(
+          minecraft.enabled,
+          defaultSecretsConfig.minecraft.enabled,
+        ),
+        token: asString(
+          minecraft.token,
+          defaultSecretsConfig.minecraft.token,
+        ),
+        clientId: asString(
+          minecraft.clientId,
+          defaultSecretsConfig.minecraft.clientId,
         ),
       },
     };
